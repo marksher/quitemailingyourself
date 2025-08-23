@@ -4,8 +4,22 @@ This guide will help you set up automated deployment to AWS EC2 using GitHub Act
 
 ## 🚀 Quick Setup
 
-### 1. Launch EC2 Instance
+### 1. Set up IAM Role (One-time setup)
+First, create the IAM role that gives your EC2 instance S3 permissions:
+
+```bash
+# Run this on your local machine (requires AWS CLI configured)
+./scripts/setup-iam.sh
+```
+
+This creates:
+- IAM role: `QuitemailingyourselfEC2Role`
+- S3 policy: `QuitemailingyourselfS3Policy` 
+- Instance profile: `QuitemailingyourselfInstanceProfile`
+
+### 2. Launch EC2 Instance
 - Launch an Ubuntu 22.04 EC2 instance (t2.micro works for testing)
+- **IMPORTANT**: Attach the IAM instance profile: `QuitemailingyourselfInstanceProfile`
 - Configure security group to allow:
   - SSH (port 22) from your IP
   - HTTP (port 80) from anywhere (0.0.0.0/0)
@@ -31,13 +45,23 @@ nano /home/ubuntu/quitemailingyourself/.env
 
 Fill in your actual values:
 ```env
-DATABASE_URL=sqlite:///./app.db
-OPENAI_API_KEY=sk-your-actual-key
+# AWS Configuration (no credentials needed - uses IAM role)
+AWS_DEFAULT_REGION=us-east-1
+
+# Google OAuth (required)
 GOOGLE_CLIENT_ID=your-google-client-id
 GOOGLE_CLIENT_SECRET=your-google-client-secret
+
+# App Settings
 APP_TITLE=Pocketish
+SECRET_KEY=your-generated-secret-key
 BASE_URL=http://your-ec2-public-ip:8000
+
+# OpenAI (optional)
+OPENAI_API_KEY=sk-your-actual-key
 ```
+
+**Note**: No AWS access keys needed! The EC2 instance uses its IAM role to access S3.
 
 ### 4. Set up GitHub Secrets
 In your GitHub repository, go to Settings → Secrets and variables → Actions, and add:

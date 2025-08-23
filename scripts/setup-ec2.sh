@@ -34,8 +34,8 @@ mkdir -p logs
 
 # Create .env file (you'll need to fill this with your actual values)
 cat > .env << EOF
-# Database
-DATABASE_URL=sqlite:///./app.db
+# AWS Configuration (uses EC2 IAM role - no credentials needed)
+AWS_DEFAULT_REGION=us-east-1
 
 # OpenAI (optional)
 OPENAI_API_KEY=your_openai_api_key_here

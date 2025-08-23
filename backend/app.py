@@ -43,23 +43,9 @@ APP_TITLE = os.getenv("APP_TITLE", "Pocketish")
 SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_hex(32))
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
-DB_URL = os.getenv("DATABASE_URL") or os.getenv("DB_URL") or "sqlite:///./app.db"
-IS_SQLITE = DB_URL.startswith("sqlite:")
-
-# ------------------------------------------------------------------------------
-# Database
-# ------------------------------------------------------------------------------
-connect_args = {"check_same_thread": False} if IS_SQLITE else {}
-engine = create_engine(DB_URL, future=True, pool_pre_ping=True, connect_args=connect_args)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+# Database configuration - DuckDB with S3
+from backend.duckdb_config import engine, SessionLocal, get_session, init_s3_bucket, S3_REGION
 Base = declarative_base()
-
-def get_session() -> Generator[Session, None, None]:
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
 
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -149,8 +135,47 @@ class LinkTag(Base):
         UniqueConstraint("link_id", "name", "submitted_by", name="uq_link_tag_name_role"),
     )
 
+def validate_environment():
+    """Validate required environment variables on startup"""
+    required_vars = [
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET", 
+        "SECRET_KEY"
+    ]
+    
+    missing = [var for var in required_vars if not os.getenv(var)]
+    if missing:
+        print(f"❌ Missing required environment variables: {missing}")
+        print("   Check your .env file or environment configuration")
+        raise ValueError(f"Missing required environment variables: {missing}")
+    
+    # Warn about optional but recommended variables
+    optional_vars = {
+        "OPENAI_API_KEY": "OpenAI integration for AI summaries", 
+        "BASE_URL": "Proper OAuth redirects"
+    }
+    
+    for var, description in optional_vars.items():
+        if not os.getenv(var):
+            print(f"⚠️  Optional variable {var} not set: {description}")
+    
+    print("✅ Environment validation passed")
+
 def init_db():
+    """Initialize database tables and S3 bucket"""
+    validate_environment()
+    init_s3_bucket()
     Base.metadata.create_all(engine)
+    
+    # Run migrations
+    try:
+        from backend.migrations_registry import *  # Import to register migrations
+        from backend.migrations import run_migrations
+        run_migrations()
+    except Exception as e:
+        print(f"⚠️  Migration warning: {e}")
+        
+    print("✅ Database initialized with DuckDB/S3")
 
 # ------------------------------------------------------------------------------
 # FastAPI app
@@ -164,6 +189,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Global exception handler for database/S3 failures
+@app.exception_handler(RuntimeError)
+async def database_exception_handler(request: Request, exc: RuntimeError):
+    if "Database unavailable" in str(exc):
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "Service temporarily unavailable",
+                "message": "The database service is currently down. Please try again later.",
+                "details": str(exc) if "S3 connection failed" in str(exc) else None
+            }
+        )
+    raise exc
 
 # ------------------------------------------------------------------------------
 # OAuth (Google only)
@@ -779,7 +818,39 @@ async def auth_logout(request: Request):
 # ------------------------------------------------------------------------------
 @app.get("/health")
 def health():
-    return {"ok": True}
+    """Enhanced health check with database and S3 connectivity"""
+    try:
+        # Test database connection
+        with SessionLocal() as s:
+            s.execute(text("SELECT 1"))
+        db_status = "ok"
+    except Exception as e:
+        db_status = f"error: {str(e)[:100]}"
+    
+    # Test S3 connectivity
+    try:
+        import boto3
+        s3_client = boto3.client('s3', region_name=S3_REGION)
+        s3_client.head_bucket(Bucket="quitemailingmyself")
+        s3_status = "ok"
+    except Exception as e:
+        s3_status = f"error: {str(e)[:100]}"
+    
+    overall_ok = db_status == "ok" and s3_status == "ok"
+    
+    return {
+        "ok": overall_ok,
+        "database": {
+            "type": "duckdb-s3", 
+            "status": db_status,
+            "bucket": "quitemailingmyself"
+        },
+        "s3": {
+            "status": s3_status,
+            "region": S3_REGION
+        },
+        "openai": "configured" if _openai_client else "not configured"
+    }
 
 @app.get("/api/me")
 async def api_me(user: User = Depends(get_current_user)):
