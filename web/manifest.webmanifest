@@ -1,0 +1,7 @@
+{
+  "name": "Pocketish",
+  "short_name": "Pocketish",
+  "start_url": "/",
+  "display": "standalone",
+  "icons": []
+}
