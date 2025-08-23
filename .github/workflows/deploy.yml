@@ -1,0 +1,41 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Deploy to EC2
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.EC2_SSH_KEY }}
+        port: 22
+        script: |
+          # Navigate to app directory
+          cd /home/${{ secrets.EC2_USER }}/quitemailingyourself
+          
+          # Pull latest changes
+          git pull origin main
+          
+          # Activate virtual environment and install/update dependencies
+          source venv/bin/activate
+          pip install -r requirements.txt
+          
+          # Restart the application using PM2
+          pm2 restart quitemailingyourself || pm2 start ecosystem.config.js
+          
+          # Restart worker if it exists
+          pm2 restart quitemailingyourself-worker || pm2 start worker/worker.py --name quitemailingyourself-worker --interpreter python
+          
+          echo "Deployment completed successfully!"
