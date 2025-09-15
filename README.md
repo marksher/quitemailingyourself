@@ -47,5 +47,8 @@ python -m worker.worker
 ```
 The worker consumes local tasks (from API) and SQS if configured.
 
+
+
+
 ---
 MIT License.
